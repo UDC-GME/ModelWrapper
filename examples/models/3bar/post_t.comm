@@ -1,0 +1,93 @@
+POURSUITE(PAR_LOT='NON',
+          IGNORE_ALARM='SUPERVIS_1')
+
+# Calculations of derived fields
+# ----------------------
+# REAC_NODA = reaction forces
+# SIEF_ELNO = internal forces
+
+
+res=CALC_CHAMP(reuse=res,
+              FORCE=('REAC_NODA',),
+              RESULTAT=res)
+
+res=CALC_CHAMP(reuse=res,
+              CONTRAINTE=('SIEF_ELNO',),
+              RESULTAT=res)
+
+# Mass of the model
+mass=POST_ELEM(
+            RESULTAT =res,
+            MODELE=modl,
+            MASS_INER=_F(TOUT='OUI'),
+            TITRE= 'Mass',
+)
+totalmass = mass.EXTR_TABLE().values()['MASSE'][0]
+volume = totalmass / {{rho}}
+
+# Axial forces
+axial1 = CREA_TABLE( RESU=
+                    _F(RESULTAT=res,
+                      NOM_CHAM='SIEF_ELNO',
+                      NOM_CMP='N',
+                      GROUP_MA='Bar1',
+                      ),
+)
+axial2 = CREA_TABLE( RESU=
+                    _F(RESULTAT=res,
+                      NOM_CHAM='SIEF_ELNO',
+                      NOM_CMP='N',
+                      GROUP_MA='Bar2',
+                      ),
+)
+# The value is printed twice for each element 
+# (2 nodes per element), so we slice the 
+# value for each element
+tension1 = axial1.EXTR_TABLE().values()['N'][::2] 
+tension2 = axial2.EXTR_TABLE().values()['N'][::2] 
+
+# Divide by the area and join the two lists
+stress1 =  [ tension / {{A1}} for tension in tension1]
+stress2 =  [ tension / {{A2}} for tension in tension2]
+stress = stress1 + stress2
+
+
+IMPR_RESU(FORMAT='RESULTAT',
+          RESU=_F(RESULTAT=res,
+                  NOM_CHAM='DEPL',
+                  GROUP_NO='Load'
+          ),
+)
+
+IMPR_RESU(FORMAT='RESULTAT',
+          RESU=_F(RESULTAT=res,
+                  NOM_CHAM='REAC_NODA',
+                  GROUP_NO='Fix'
+          ),
+)
+
+IMPR_RESU(FORMAT='RESULTAT',
+          RESU=(
+                _F(RESULTAT=res,
+                  NOM_CHAM='SIEF_ELNO',
+                  NOM_CMP='N',
+                  GROUP_MA='Bars',
+                  ),
+                _F(RESULTAT=res,
+                  NOM_CHAM='SIEF_ELNO',
+                  NOM_CMP='N',
+                  GROUP_MA='Bars',
+                  VALE_MAX='OUI', VALE_MIN='OUI',
+                  ),
+        )
+)
+
+import json
+results = {}
+results['volume'] = volume
+results['stress'] = stress
+s = json.dumps(results)
+with open('fort.31', 'w') as f:
+    f.write(s)
+
+FIN()

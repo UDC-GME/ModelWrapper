@@ -1,0 +1,18 @@
+P actions make_etude
+P memjob 1048576
+P memory_limit 1024.0
+P mode interactif
+P mpi_nbcpu 1
+P mpi_nbnoeud 1
+P ncpus 1
+P time_limit 120.0
+P tpsjob 3
+P version stable
+A args 
+A memjeveux 128.0
+A tpmax 120.0
+F comm post.comm D  1
+R base analysis.base DC  0
+F mess post.mess R  6
+F resu post.resu R 8
+F libr results.json R 31

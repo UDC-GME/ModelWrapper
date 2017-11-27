@@ -1,0 +1,87 @@
+# First mandatory command
+# -----------------------------------
+
+DEBUT( IGNORE_ALARM='MODELISA8_14')
+
+# Read mesh
+# ------------------
+
+mesh=LIRE_MAILLAGE( FORMAT='MED', INFO=1 )
+
+
+# Add a group with all the elements
+# ---------------------------------
+mesh = DEFI_GROUP(
+        reuse=mesh, MAILLAGE=mesh,
+        CREA_GROUP_NO=_F(TOUT_GROUP_MA='OUI'),
+)
+
+# Definition of the model
+# --------------------
+modl=AFFE_MODELE( MAILLAGE=mesh,
+                 AFFE=_F( 
+                    TOUT = 'OUI',
+                    PHENOMENE = 'MECANIQUE',
+                    MODELISATION = 'BARRE') )
+
+# Material definition
+# ----------------------
+E = {{E}}
+nu = {{nu}}
+rho = {{rho}}
+A1 = {{A1}}
+A2 = {{A2}}
+P = {{P}}
+theta = {{theta}}
+
+steel=DEFI_MATERIAU(ELAS=_F( E = E,NU = nu, RHO = rho) )
+
+# Assignment of the material on the mesh
+# ---------------------------------------
+
+material=AFFE_MATERIAU(MAILLAGE=mesh, 
+                        AFFE=_F( TOUT = 'OUI',MATER = steel))
+
+# Section Assigment
+# -------------------------------------
+sect=AFFE_CARA_ELEM( MODELE=modl,
+                  BARRE=(
+                         _F( GROUP_MA = 'Bar1', 
+                            SECTION  = 'GENERALE',
+                            CARA = 'A', VALE = A1),
+                         _F( GROUP_MA = 'Bar2', 
+                            SECTION  = 'GENERALE',
+                            CARA = 'A', VALE = A2),
+                  )
+)
+
+## Boundary conditions
+## -------------------------------------
+clim=AFFE_CHAR_MECA( MODELE=modl,DDL_IMPO=(
+                   _F( TOUT = 'OUI',    DZ = 0., ),
+                   _F( GROUP_NO = ('Fix'),   DX = 0., DY = 0.),
+                   ), 
+)
+
+import numpy as np
+Px = P*cos(np.radians(theta))
+Py = P*sin(np.radians(theta))
+
+## Loads definition
+## -------------------------
+load=AFFE_CHAR_MECA( MODELE=modl,
+          FORCE_NODALE=_F( GROUP_NO = ('Load'),  FX = Px, FY = Py)
+)
+
+# Resolution
+# ----------
+res=MECA_STATIQUE(MODELE=modl,
+                 CHAM_MATER=material,
+                 CARA_ELEM=sect,
+                 EXCIT=( 
+                    _F( CHARGE = load),
+                    _F( CHARGE = clim),
+                  )
+)
+
+FIN();
