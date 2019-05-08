@@ -6,6 +6,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from shutil import copy, rmtree
 import subprocess
+import pandas as pd
 
 # Loader to interpret floating point notation in yaml file
 loader = yaml.SafeLoader
@@ -49,6 +50,10 @@ class Model:
         self.rootParametersFile = parametersFile
 
         self._checkParameters()
+
+        # Init empty dataframe for history
+        self.df = pd.DataFrame({})
+
 
     def getNumberOfVariables(self):
         return len(self.dv)
@@ -98,10 +103,29 @@ class Model:
         with self.result_file.open('r') as f:
             self.results =  json.load(f, object_hook=intHook)
 
+        # Add results to history
+        self._appendResults()
+
         if self.config['clean'] :
             rmtree(str(launchPath))
             
             
+    def _appendResults(self):
+        if self.df.empty:
+            self._initDataframe()
+        rowDict = dict(zip(self.dv, self.x))
+        resultsDict = flattenDict(self.results)
+        rowDict.update(resultsDict)
+        row = []
+        row = [rowDict[key] for key in self.df.columns]
+        self.df.loc[len(self.df)] = row
+
+        
+    def _initDataframe(self):
+        flattenResultsDict = flattenDict(self.results)
+        columns = self.dv + flattenResultsDict.keys() 
+        self.df = self.df.reindex(columns=columns)
+
 
     def _copyNotInit(self, launchPath, initPaths):
         setofFiles = set(self.path.glob('*'))
@@ -132,8 +156,6 @@ class Model:
         with  self.newParametersFile.open('w') as f:
             yaml.dump(dic, f, default_flow_style=False)
 
-    #def _initFiles(self, launchPath):
-        
 
     def _createLaunchFolder(self):
 
@@ -170,3 +192,15 @@ def prepro(paramFile, templateFile, resultFile):
     with resultFile.open('w') as f:
         f.write(render)
 
+
+def flattenDict(d):
+    resultDict = {}
+    for key in d.keys():
+        if isinstance(d[key] , dict):
+            innerDict = flattenDict(d[key])
+            tmpDict = {key+'-'+str(nkey):innerDict[nkey]  for nkey in innerDict.keys()}
+            resultDict.update(tmpDict)
+        else:
+            resultDict[key] = d[key]
+
+    return resultDict
