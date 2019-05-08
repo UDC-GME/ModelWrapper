@@ -1,10 +1,11 @@
-import os
-import sys
 import yaml
+import sys
 import json
 import re
+from pathlib import Path
+from jinja2 import Environment, FileSystemLoader
+from shutil import copy, rmtree
 import subprocess
-import numpy as np
 
 # Loader to interpret floating point notation in yaml file
 loader = yaml.SafeLoader
@@ -19,109 +20,153 @@ loader.add_implicit_resolver(
     |\\.(?:nan|NaN|NAN))$''', re.X),
     list(u'-+0123456789.'))
 
+class Model:
 
-class ModelWrapper:
+    def __init__(self, path, dv, config={'commands': 'make', 'init': False,
+                                         'clean': False}, 
+                 name = 'model'):
 
-    def __init__(self, path, dv):
-        if (not os.path.isdir(path)):
+        self.config = config
+        if (not path.is_dir()):
             sys.exit('%s is not a directory' % path)
         self.path = path
-        if (not all(isinstance(xvar, str) for xvar in dv)):
-            sys.exit('Desing variables must be a list of strings')
-        self.dv = dv
-        # List containng all the evaluations parameters of the model
-        self.x_history = []
-        # List containng all the results of the model
-        self.result_history = []
-        # Parameters file
-        self.param_file = os.path.join(self.path, 'parameters.yaml')
-        # Parameters file
-        self.result_file = os.path.join(self.path, 'results.json')
-        # Check if desing variables are in the parameters file
-        # Generate an empty dict with the keys only for checking
-        self._checkParameters(dict.fromkeys(dv))
-        # Truncate error and log file
-        with open('model-out.log', 'w') as out, \
-                open('model-err.log', 'w') as err:
-            out.truncate(); err.truncate()
+        # Run folder
+        self.runPath = self.path / 'run'
+        if not self.runPath.exists():
+            self.runPath.mkdir()
 
-    def _checkParameters(self, params):
+        if (not isinstance(name, str)):
+            sys.exit('Name must be a string' % name)
+        self.name = name
+
+        if (not all(isinstance(xvar, str) for xvar in dv)):
+            sys.exit('Model variables must be a list of strings')
+        self.dv = dv
+        
+        parametersFile = path / 'parameters.yaml'
+        if (not parametersFile.exists()):
+            sys.exit('No parameters.yaml file in %s' % path)
+        self.rootParametersFile = parametersFile
+
+        self._checkParameters()
+
+    def getNumberOfVariables(self):
+        return len(self.dv)
+    
+    def _checkParameters(self):
         """
             Check if the parameters are in parameters.yaml
         """
-        with open(self.param_file, 'r') as f:
+        with self.rootParametersFile.open('r') as f:
             dic = yaml.load(f, Loader=loader)
         try:
-            for key in params.keys():
+            for key in self.dv:
                 dic[key]
         except KeyError:
             raise KeyError('Parameter {} not in parameters file'.format(key))
 
-    def run(self):
-        if (not len(self.x) == len(self.dv)):
-            sys.exit('x array has to be of size equal to the number of '
-                     'desing variables = %s' % len(self.dv))
-        self.modifyDesign()
-        # Run simulation and wait for it to finish
-        with open('model-out.log', 'a') as out, \
-                open('model-err.log', 'a') as err:
-            p = subprocess.Popen('make', cwd=self.path, shell=True,
-                                 stdout=out, stderr=err)
-            p.wait()
-        if (p.returncode is not 0):
-            sys.exit("Model didn't execute correctly. "
-                     "See model-err.log for details")
-        # Collect results
-        with open(self.result_file) as f:
-            return json.load(f)
+    def run(self, x):
 
-    def eval(self, x):
+        if (not len(x) == len(self.dv)):
+            sys.exit('Input array has to be of size equal to the number of '
+                     'model variables = %s' % len(self.dv))
         self.x = x
-        # Check if x was previously calculated
-        # Relative tolerance comparing numpy arrays
-        # must be less than the tolerance of the optimization algorithm
-        if not any(np.allclose(self.x, x_old, rtol=1e-7)
-                   for x_old in self.x_history):
-            # Store a copy of self.x so later modifications doesn't alter
-            # the list
-            self.x_history.append(self.x.copy())
-            self.result_history.append(self.run())
-            # Return last calculated result
-            return self.result_history[-1]
-        else:
-            # Return the previously calculated result
-            # Get the index where the value is sufficiently close
-            index = next(i for i, val in enumerate(self.x_history)
-                         if np.allclose(self.x, val, rtol=1e-7))
-            return self.result_history[index]
 
-    # Closure to get the desired function
-    def getFun(self, name):
-        def fun(x):
-            return self.eval(x)[name]
-        return fun
+        launchPath = self._createLaunchFolder()
+        self._modifyParameters(launchPath)
+        if self.config['init']:
+           initPaths = self._initFiles(launchPath)
+        # Copy not initialized files to launchpath 
+        self._copyNotInit(launchPath, initPaths)
 
-    def setParameters(self, newValuesDict):
-        self._checkParameters(newValuesDict)
-        with open(self.param_file, 'r') as f:
-            dic = yaml.load(f, Loader=loader)
-        gen = (key for key in dic.keys() if key in newValuesDict)
-        # Convert numpy array to float to being able to render it  in yaml file
-        for key in gen:
-            dic[key] = float(newValuesDict[key])
-        with open(self.param_file, 'w') as f:
-            yaml.dump(dic, f, default_flow_style=False)
+        outLog = launchPath / 'model-out.log'
+        errLog = launchPath / 'model-err.log'
+        with outLog.open('w') as out, errLog.open('w') as err:
+            for command in self.config['commands']:
+                p = subprocess.Popen(command, cwd=str(launchPath), shell=True,
+                                     stdout=out, stderr=err)
+                p.wait()
+                if (p.returncode is not 0):
+                    sys.exit("The following command didn't execute correctly: \n"
+                             "$ "+command+"\n"
+                             "See model-err.log for details")
+        # Collect results
+        self.result_file = launchPath / 'results.json'
+        # Function to convert strings to integers
+        intHook = lambda d: {int(k) if k.lstrip('-').isdigit() 
+                             else k: v for k, v in d.items()}
+        with self.result_file.open('r') as f:
+            self.results =  json.load(f, object_hook=intHook)
 
-    def modifyDesign(self):
+        if self.config['clean'] :
+            rmtree(str(launchPath))
+            
+            
+
+    def _copyNotInit(self, launchPath, initPaths):
+        setofFiles = set(self.path.glob('*'))
+        setofFiles.remove(self.runPath)
+        setofFiles.remove(self.rootParametersFile)
+        [setofFiles.remove(p) for p in initPaths]
+        for f in setofFiles:
+            filestr = str(f)
+            copy(filestr, str(launchPath))
+
+    def _initFiles(self, launchPath):
+        listofTemplates = list(self.path.glob('*_t.*'))
+        for template in listofTemplates:
+            outputFile = launchPath / template.name.replace('_t','')
+            prepro(self.newParametersFile, template, outputFile)
+        return listofTemplates
+
+
+    def _modifyParameters(self, launchPath):
         newValuesDict = dict(zip(self.dv, self.x))
-        with open(self.param_file, 'r') as f:
+        with self.rootParametersFile.open('r') as f:
             dic = yaml.load(f, Loader=loader)
         gen = (key for key in dic.keys() if key in newValuesDict)
         # Convert numpy array to float to being able to render it  in yaml file
         for key in gen:
             dic[key] = float(newValuesDict[key])
-        with open(self.param_file, 'w') as f:
+        self.newParametersFile = launchPath / 'parameters.yaml'
+        with  self.newParametersFile.open('w') as f:
             yaml.dump(dic, f, default_flow_style=False)
 
-    def getNumberOfVariables(self):
-        return len(self.dv)
+    #def _initFiles(self, launchPath):
+        
+
+    def _createLaunchFolder(self):
+
+        # Generate folder for the run
+        listofFolders = list(self.runPath.glob(self.name+'-*'))
+        if listofFolders: 
+            lNumbers =  [int(str(a).split('-')[-1]) for a in listofFolders]
+            number = max(lNumbers)+1
+        else:
+            number = 1
+        dirName = self.name + '-' + str(number)
+        launchPath = self.runPath  / dirName
+        launchPath.mkdir()
+        return launchPath
+             
+
+def prepro(paramFile, templateFile, resultFile):
+
+    with paramFile.open('r') as stream:
+        try:
+            d = yaml.load(stream, Loader=loader)
+        except yaml.YAMLError as exc:
+            print(exc)            
+    
+    for key in d:
+        if type(d[key]) == str:
+            d[key]="'%s'" % d[key]
+    
+    templateParent = str(templateFile.parent)
+    env = Environment(loader=FileSystemLoader(templateParent))
+    template = env.get_template(templateFile.name)
+    render = template.render(d)
+
+    with resultFile.open('w') as f:
+        f.write(render)
+
