@@ -94,6 +94,7 @@ class Model:
                 if (p.returncode is not 0):
                     sys.exit("The following command didn't execute correctly: \n"
                              "$ "+command+"\n"
+                             "In folder: " + str(launchPath) + "\n"
                              "See model-err.log for details")
         # Collect results
         self.result_file = launchPath / 'results.json'
