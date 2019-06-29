@@ -146,13 +146,19 @@ class Model:
 
 
     def _modifyParameters(self, launchPath):
-        newValuesDict = dict(zip(self.dv, self.x))
+
+        # Convert to list so it can be rendered in the yaml file
+        # Numpy arrays are not supported
+        x = list(self.x)
+        newValuesDict = dict(zip(self.dv, x))
+
         with self.rootParametersFile.open('r') as f:
             dic = yaml.load(f, Loader=loader)
+
         gen = (key for key in dic.keys() if key in newValuesDict)
-        # Convert numpy array to float to being able to render it  in yaml file
         for key in gen:
-            dic[key] = float(newValuesDict[key])
+            dic[key] = newValuesDict[key]
+
         self.newParametersFile = launchPath / 'parameters.yaml'
         with  self.newParametersFile.open('w') as f:
             yaml.dump(dic, f, default_flow_style=False)
