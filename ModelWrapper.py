@@ -7,6 +7,7 @@ from jinja2 import Environment, FileSystemLoader
 from shutil import copy, rmtree
 import subprocess
 import pandas as pd
+import numpy as np
 
 # Loader to interpret floating point notation in yaml file
 loader = yaml.SafeLoader
@@ -150,6 +151,7 @@ class Model:
         # Convert to list so it can be rendered in the yaml file
         # Numpy arrays are not supported
         x = list(self.x)
+
         newValuesDict = dict(zip(self.dv, x))
 
         with self.rootParametersFile.open('r') as f:
@@ -157,7 +159,11 @@ class Model:
 
         gen = (key for key in dic.keys() if key in newValuesDict)
         for key in gen:
-            dic[key] = newValuesDict[key]
+	    value = newValuesDict[key]
+	    # Convert numpy array of numpy floats to list of floats
+	    if type(value) == np.ndarray: 
+		value = [float(v) for v in value]
+            dic[key] = value
 
         self.newParametersFile = launchPath / 'parameters.yaml'
         with  self.newParametersFile.open('w') as f:
