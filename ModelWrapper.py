@@ -125,7 +125,7 @@ class Model:
         
     def _initDataframe(self):
         flattenResultsDict = flattenDict(self.results)
-        columns = self.dv + flattenResultsDict.keys() 
+        columns = self.dv + list(flattenResultsDict.keys())
         self.df = self.df.reindex(columns=columns)
 
 
