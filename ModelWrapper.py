@@ -159,11 +159,15 @@ class Model:
 
         gen = (key for key in dic.keys() if key in newValuesDict)
         for key in gen:
-	    value = newValuesDict[key]
-	    # Convert numpy array of numpy floats to list of floats
-	    if type(value) == np.ndarray: 
-		value = [float(v) for v in value]
+            value = newValuesDict[key]
+            # Convert numpy array of numpy floats to list of floats
+            if type(value) == np.ndarray:
+                value = [float(v) for v in value]
+            # Convert other types of numpy floats to float
+            if not hasattr(value, "__len__"):
+                value = float(value)
             dic[key] = value
+
 
         self.newParametersFile = launchPath / 'parameters.yaml'
         with  self.newParametersFile.open('w') as f:
